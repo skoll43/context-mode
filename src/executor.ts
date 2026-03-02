@@ -83,7 +83,12 @@ export class PolyglotExecutor {
 
       return await this.#spawn(cmd, tmpDir, timeout);
     } finally {
-      rmSync(tmpDir, { recursive: true, force: true });
+      try {
+        rmSync(tmpDir, { recursive: true, force: true });
+      } catch {
+        // On Windows, EBUSY/EPERM is common due to delayed handle release
+        // after child process exit. Silently ignore — OS cleans temp dirs.
+      }
     }
   }
 

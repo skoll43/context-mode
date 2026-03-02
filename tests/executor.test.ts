@@ -1034,6 +1034,53 @@ IO.puts("has users: #{String.contains?(file_content, "users")}")
     assert.ok(r.stdout.includes("Hello"));
   });
 
+  // ===== TEMP CLEANUP RESILIENCE =====
+  console.log("\n--- Temp Cleanup Resilience ---\n");
+
+  await test("concurrent executions all return valid results (EBUSY resilience)", async () => {
+    // On Windows, rapid concurrent executions often trigger EBUSY when
+    // rmSync tries to delete the temp dir while Windows still holds handles.
+    // With the current code, rmSync throwing in the finally block masks
+    // the actual execution result — execute() rejects instead of resolving.
+    // This test verifies that ALL concurrent executions return valid ExecResult.
+    const count = 15;
+    const promises = Array.from({ length: count }, (_, i) =>
+      executor.execute({
+        language: "javascript",
+        code: `
+          const fs = require('fs');
+          const path = require('path');
+          for (let j = 0; j < 3; j++) {
+            fs.writeFileSync(path.join(process.cwd(), 'f' + j + '.tmp'), 'data');
+          }
+          console.log("ok-${i}");
+        `,
+      }),
+    );
+    const results = await Promise.all(promises);
+    for (let i = 0; i < results.length; i++) {
+      const r = results[i];
+      assert.equal(typeof r.exitCode, "number", `Execution ${i}: exitCode not a number`);
+      assert.equal(typeof r.stdout, "string", `Execution ${i}: stdout not a string`);
+      assert.equal(typeof r.stderr, "string", `Execution ${i}: stderr not a string`);
+      assert.equal(typeof r.timedOut, "boolean", `Execution ${i}: timedOut not a boolean`);
+      assert.equal(r.exitCode, 0, `Execution ${i} failed with stderr: ${r.stderr}`);
+      assert.ok(r.stdout.includes(`ok-${i}`), `Missing output for execution ${i}`);
+    }
+  });
+
+  await test("PATH-dependent tools accessible from executor shell", async () => {
+    // Verifies that the executor's sanitized env preserves PATH correctly.
+    // On Windows, tools like gh/node installed via Scoop/Chocolatey must be
+    // visible from the spawned shell process. If PATH is broken, this fails.
+    const r = await executor.execute({
+      language: "shell",
+      code: 'node --version',
+    });
+    assert.equal(r.exitCode, 0, `node not found in executor env, stderr: ${r.stderr}`);
+    assert.ok(r.stdout.trim().startsWith("v"), `Expected version string, got: ${r.stdout}`);
+  });
+
   // ===== WINDOWS SHELL SUPPORT =====
   console.log("\n--- Windows Shell Support ---\n");
 

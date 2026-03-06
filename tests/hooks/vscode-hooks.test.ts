@@ -9,7 +9,7 @@ import { describe, test, expect, beforeAll, afterAll } from "vitest";
 import { spawnSync } from "node:child_process";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { mkdtempSync, rmSync, existsSync, unlinkSync } from "node:fs";
+import { mkdtempSync, rmSync, existsSync, unlinkSync, writeFileSync, mkdirSync, readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { tmpdir, homedir } from "node:os";
 
@@ -198,6 +198,84 @@ describe("VS Code Copilot hooks", () => {
       }, env);
       expect(startResult.exitCode).toBe(0);
       expect(startResult.stdout).toContain("SessionStart");
+    });
+  });
+
+  // ── Auto-create copilot-instructions.md ─────────────────
+
+  describe("sessionstart.mjs — auto-create copilot-instructions.md", () => {
+    let projectDir: string;
+    let instructionsPath: string;
+
+    beforeAll(() => {
+      projectDir = mkdtempSync(join(tmpdir(), "vscode-instructions-test-"));
+      instructionsPath = join(projectDir, ".github", "copilot-instructions.md");
+    });
+
+    afterAll(() => {
+      try { rmSync(projectDir, { recursive: true, force: true }); } catch { /* best effort */ }
+    });
+
+    test("startup: creates .github/copilot-instructions.md when missing", () => {
+      expect(existsSync(instructionsPath)).toBe(false);
+
+      const result = runHook("sessionstart.mjs", {
+        source: "startup",
+        sessionId: "test-autocreate",
+      }, { VSCODE_CWD: projectDir });
+
+      expect(result.exitCode).toBe(0);
+      expect(existsSync(instructionsPath)).toBe(true);
+
+      const content = readFileSync(instructionsPath, "utf-8");
+      expect(content).toContain("context-mode");
+    });
+
+    test("startup: does NOT overwrite existing copilot-instructions.md", () => {
+      const originalContent = "# My existing instructions\nDo not overwrite.";
+      writeFileSync(instructionsPath, originalContent, "utf-8");
+
+      runHook("sessionstart.mjs", {
+        source: "startup",
+        sessionId: "test-no-overwrite",
+      }, { VSCODE_CWD: projectDir });
+
+      const content = readFileSync(instructionsPath, "utf-8");
+      expect(content).toBe(originalContent);
+    });
+
+    test("startup: creates .github directory if it does not exist", () => {
+      const newProjectDir = mkdtempSync(join(tmpdir(), "vscode-githubdir-test-"));
+      const newInstructionsPath = join(newProjectDir, ".github", "copilot-instructions.md");
+
+      try {
+        expect(existsSync(join(newProjectDir, ".github"))).toBe(false);
+
+        runHook("sessionstart.mjs", {
+          source: "startup",
+          sessionId: "test-mkdir",
+        }, { VSCODE_CWD: newProjectDir });
+
+        expect(existsSync(newInstructionsPath)).toBe(true);
+      } finally {
+        try { rmSync(newProjectDir, { recursive: true, force: true }); } catch { /* best effort */ }
+      }
+    });
+
+    test("compact: does NOT create copilot-instructions.md", () => {
+      const compactProjectDir = mkdtempSync(join(tmpdir(), "vscode-compact-test-"));
+      const compactInstructionsPath = join(compactProjectDir, ".github", "copilot-instructions.md");
+
+      try {
+        runHook("sessionstart.mjs", {
+          source: "compact",
+          sessionId: "test-compact-no-create",
+        }, { VSCODE_CWD: compactProjectDir });
+
+        expect(existsSync(compactInstructionsPath)).toBe(false);
+      } finally {
+        try { rmSync(compactProjectDir, { recursive: true, force: true }); } catch { /* best effort */ }
+      }
     });
   });
 });

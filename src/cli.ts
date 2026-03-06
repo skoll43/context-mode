@@ -18,7 +18,7 @@ import { execSync } from "node:child_process";
 import { readFileSync, cpSync, accessSync, readdirSync, rmSync, closeSync, openSync, constants } from "node:fs";
 import { resolve, dirname, join } from "node:path";
 import { tmpdir, devNull } from "node:os";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   detectRuntimes,
   getRuntimeSummary,
@@ -73,7 +73,7 @@ async function hookDispatch(platform: string, event: string): Promise<void> {
     process.exit(1);
   }
   const pluginRoot = getPluginRoot();
-  await import(join(pluginRoot, scriptPath));
+  await import(pathToFileURL(join(pluginRoot, scriptPath)).href);
 }
 
 /* -------------------------------------------------------
@@ -521,6 +521,16 @@ async function upgrade() {
     changes.push(change);
   }
   p.log.success(color.green("Hooks configured") + color.dim(` — ${adapter.name}`));
+
+  // Step 4.5: Write routing instructions file (e.g. copilot-instructions.md) — adapter-aware
+  p.log.step(`Writing routing instructions file...`);
+  const routingPath = adapter.writeRoutingInstructions(process.cwd(), pluginRoot);
+  if (routingPath) {
+    p.log.success(color.green("Routing instructions created") + color.dim(` → ${routingPath}`));
+    changes.push(`Created routing instructions: ${routingPath}`);
+  } else {
+    p.log.info(color.dim("  Routing instructions already present or not applicable — skipped"));
+  }
 
   // Step 5: Set hook script permissions — adapter-aware
   p.log.step("Setting hook script permissions...");

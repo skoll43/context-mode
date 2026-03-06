@@ -17,10 +17,11 @@ import {
   getProjectDir, VSCODE_OPTS,
 } from "../session-helpers.mjs";
 import { join } from "node:path";
-import { readFileSync, writeFileSync, unlinkSync } from "node:fs";
+import { readFileSync, writeFileSync, unlinkSync, mkdirSync } from "node:fs";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { homedir } from "node:os";
 
-const HOOK_DIR = new URL(".", import.meta.url).pathname;
+const HOOK_DIR = fileURLToPath(new URL(".", import.meta.url));
 const PKG_SESSION = join(HOOK_DIR, "..", "..", "build", "session");
 const OPTS = VSCODE_OPTS;
 
@@ -32,7 +33,7 @@ try {
   const source = input.source ?? "startup";
 
   if (source === "compact") {
-    const { SessionDB } = await import(join(PKG_SESSION, "db.js"));
+    const { SessionDB } = await import(pathToFileURL(join(PKG_SESSION, "db.js")).href);
     const dbPath = getSessionDBPath(OPTS);
     const db = new SessionDB({ dbPath });
     const sessionId = getSessionId(input, OPTS);
@@ -52,7 +53,7 @@ try {
   } else if (source === "resume") {
     try { unlinkSync(getCleanupFlagPath(OPTS)); } catch { /* no flag */ }
 
-    const { SessionDB } = await import(join(PKG_SESSION, "db.js"));
+    const { SessionDB } = await import(pathToFileURL(join(PKG_SESSION, "db.js")).href);
     const dbPath = getSessionDBPath(OPTS);
     const db = new SessionDB({ dbPath });
 
@@ -64,7 +65,7 @@ try {
 
     db.close();
   } else if (source === "startup") {
-    const { SessionDB } = await import(join(PKG_SESSION, "db.js"));
+    const { SessionDB } = await import(pathToFileURL(join(PKG_SESSION, "db.js")).href);
     const dbPath = getSessionDBPath(OPTS);
     const db = new SessionDB({ dbPath });
     try { unlinkSync(getSessionEventsPath(OPTS)); } catch { /* no stale file */ }
@@ -98,6 +99,20 @@ try {
     }
 
     db.close();
+
+    // Auto-create .github/copilot-instructions.md on first run if missing
+    const instructionsTarget = join(projectDir, ".github", "copilot-instructions.md");
+    try {
+      readFileSync(instructionsTarget);
+    } catch {
+      try {
+        const pluginRoot = join(HOOK_DIR, "..", "..");
+        const instructionsSource = join(pluginRoot, "configs", "vscode-copilot", "copilot-instructions.md");
+        const instructionsContent = readFileSync(instructionsSource, "utf-8");
+        mkdirSync(join(projectDir, ".github"), { recursive: true });
+        writeFileSync(instructionsTarget, instructionsContent, "utf-8");
+      } catch { /* configs not available — skip silently */ }
+    }
   }
   // "clear" — no action needed
 } catch (err) {

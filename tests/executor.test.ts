@@ -39,8 +39,9 @@ describe("Runtime Detection", () => {
     });
 
     test("Windows: shell execute works with non-ASCII (Chinese) project path", async () => {
-      const chineseDir = "C:\\Users\\NINGMEI\\AppData\\Local\\Temp\\测试目录";
       const { mkdirSync, rmSync } = await import("node:fs");
+      const { tmpdir } = await import("node:os");
+      const chineseDir = join(tmpdir(), "测试目录");
       try { mkdirSync(chineseDir, { recursive: true }); } catch {}
       const chineseExecutor = new PolyglotExecutor({ runtimes, projectRoot: chineseDir });
       const r = await chineseExecutor.execute({ language: "shell", code: 'echo "chinese path ok"' });

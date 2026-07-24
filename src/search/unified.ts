@@ -136,13 +136,39 @@ export function searchAllSources(opts: SearchAllSourcesOpts): UnifiedSearchResul
       if (sessionDB) {
         const dbResults = sessionDB.searchEvents(query, limit, projectDir || "", source);
         results.push(
-          ...dbResults.map((r: Pick<StoredEvent, "id" | "session_id" | "category" | "type" | "data" | "created_at">) => ({
-            title: `[${r.category}] ${r.type}`,
-            content: r.data,
-            source: "prior-session",
-            origin: "prior-session" as const,
-            timestamp: r.created_at,
-          })),
+          ...dbResults.map((r: Pick<StoredEvent, "id" | "session_id" | "category" | "type" | "data" | "created_at">) => {
+            let contentText = r.data;
+            if (typeof sessionDB.getLinkedEdges === "function") {
+              const errEdges = sessionDB.getLinkedEdges(`evt-err-${r.id}`, 0.5);
+              const decEdges = sessionDB.getLinkedEdges(`evt-dec-${r.id}`, 0.5);
+              const constrEdges = sessionDB.getLinkedEdges(`evt-constraint-${r.id}`, 0.5);
+              const subagentEdges = sessionDB.getLinkedEdges(`evt-subagent-${r.id}`, 0.5);
+              const intentEdges = sessionDB.getLinkedEdges(`evt-intent-${r.id}`, 0.5);
+              const loopEdges = sessionDB.getLinkedEdges(`evt-loop-${r.id}`, 0.5);
+              const edges = [...errEdges, ...decEdges, ...constrEdges, ...subagentEdges, ...intentEdges, ...loopEdges];
+              if (edges.length > 0) {
+                const label = edges[0].relationship === "LED_TO"
+                  ? "Causal Implementation"
+                  : edges[0].relationship === "CONSTRAINS"
+                  ? "Causal Constraint"
+                  : edges[0].relationship === "PRODUCED"
+                  ? "Causal Finding"
+                  : edges[0].relationship === "MOTIVATED"
+                  ? "Motivated Directive"
+                  : edges[0].relationship === "LOOPED_ON"
+                  ? "Stuck Loop Warning"
+                  : "Causal Resolution";
+                contentText += `\n  ↳ [${label}]: Linked ${edges[0].relationship} target ${edges[0].target_id} (confidence: ${edges[0].confidence})`;
+              }
+            }
+            return {
+              title: `[${r.category}] ${r.type}`,
+              content: contentText,
+              source: "prior-session",
+              origin: "prior-session" as const,
+              timestamp: r.created_at,
+            };
+          }),
         );
       }
     } catch (e) {

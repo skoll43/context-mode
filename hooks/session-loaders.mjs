@@ -109,6 +109,91 @@ export function attributeAndInsertEvents(db, sessionId, events, input, projectDi
     }
   }
 
+  // Automatic Causal Edge Graph Wiring for Category 23 (error-resolution)
+  const hasErrorResolution = events.some((e) => e?.category === "error-resolution");
+  if (hasErrorResolution && typeof db.getLatestSessionError === "function" && typeof db.insertEdge === "function") {
+    try {
+      const latestError = db.getLatestSessionError(sessionId);
+      if (latestError) {
+        db.insertEdge(`evt-err-${latestError.id}`, `evt-resolution-${Date.now()}`, "RESOLVED_BY", 0.8);
+      }
+    } catch {
+      /* ignore edge insertion error */
+    }
+  }
+
+  // Automatic Causal Edge Graph Wiring for Decision / Plan -> Implementation (LED_TO)
+  const hasFileEdit = events.some((e) => e?.category === "file" || e?.type === "file_write");
+  if (hasFileEdit && typeof db.getLatestSessionDecision === "function" && typeof db.insertEdge === "function") {
+    try {
+      const latestDecision = db.getLatestSessionDecision(sessionId);
+      if (latestDecision) {
+        db.insertEdge(`evt-dec-${latestDecision.id}`, `evt-edit-${Date.now()}`, "LED_TO", 0.8);
+      }
+    } catch {
+      /* ignore edge insertion error */
+    }
+  }
+
+  // Automatic Causal Edge Graph Wiring for Category 10 (constraint -> tool/command)
+  const hasConstraint = events.some((e) => e?.category === "constraint");
+  if (hasConstraint && typeof db.getLatestSessionConstraint === "function" && typeof db.insertEdge === "function") {
+    try {
+      const latestConstraint = db.getLatestSessionConstraint(sessionId);
+      if (latestConstraint) {
+        const targetTool = input.tool_name || "tool_call";
+        db.insertEdge(`evt-constraint-${latestConstraint.id}`, `tool-${targetTool}`, "CONSTRAINS", 0.85);
+      }
+    } catch {
+      /* ignore edge insertion error */
+    }
+  }
+
+  // Automatic Causal Edge Graph Wiring for Subagent / Task -> Findings (PRODUCED)
+  const hasSubagentFinding = events.some((e) => e?.category === "agent-finding" || e?.type === "subagent_completed");
+  if (hasSubagentFinding && typeof db.getLatestSubagentTask === "function" && typeof db.insertEdge === "function") {
+    try {
+      const latestSubagent = db.getLatestSubagentTask(sessionId);
+      if (latestSubagent) {
+        db.insertEdge(`evt-subagent-${latestSubagent.id}`, `evt-finding-${Date.now()}`, "PRODUCED", 0.9);
+      }
+    } catch {
+      /* ignore edge insertion error */
+    }
+  }
+
+  // Automatic Causal Edge Graph Wiring for Intent (implement) -> Root Action (MOTIVATED)
+  const hasRootAction = events.some((e) => e?.category === "decision" || e?.category === "plan" || e?.type === "file_write");
+  if (hasRootAction && typeof db.getLatestImplementIntent === "function" && typeof db.getLinkedEdges === "function" && typeof db.insertEdge === "function") {
+    try {
+      const latestIntent = db.getLatestImplementIntent(sessionId);
+      if (latestIntent) {
+        const intentSourceId = `evt-intent-${latestIntent.id}`;
+        // Anti-redundancy check: ensure single root link per intent directive
+        const existingEdges = db.getLinkedEdges(intentSourceId, 0.5);
+        if (existingEdges.length === 0) {
+          db.insertEdge(intentSourceId, `evt-root-${Date.now()}`, "MOTIVATED", 0.8);
+        }
+      }
+    } catch {
+      /* ignore edge insertion error */
+    }
+  }
+
+  // Automatic Causal Edge Graph Wiring for Category 26 (iteration-loop -> target tool)
+  const hasIterationLoop = events.some((e) => e?.category === "iteration-loop");
+  if (hasIterationLoop && typeof db.getLatestIterationLoop === "function" && typeof db.insertEdge === "function") {
+    try {
+      const latestLoop = db.getLatestIterationLoop(sessionId);
+      if (latestLoop) {
+        const targetTool = input.tool_name || "tool_call";
+        db.insertEdge(`evt-loop-${latestLoop.id}`, `tool-${targetTool}`, "LOOPED_ON", 0.9);
+      }
+    } catch {
+      /* ignore edge insertion error */
+    }
+  }
+
   // PRD-context-as-a-service §5.2 — Forwarder injection.
   // Gated: the per-event loop never runs when ~/.context-mode/platform.json
   // is missing. hasPlatformConfig() is a single cached probe (60s TTL), so

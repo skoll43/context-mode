@@ -1433,4 +1433,165 @@ describe("session-resume category", () => {
     expect(events[0].data).toContain("resume");
     expect(events[0].data).toContain("10");
   });
+
+  describe("SessionDB — Causal Edges (session_edges)", () => {
+    test("initializes session_edges schema idempotently", () => {
+      const db = createTestDB();
+      const tables = db.db.pragma("table_list") as Array<{ name: string }>;
+      const hasEdgesTable = tables.some((t) => t.name === "session_edges");
+      expect(hasEdgesTable).toBe(true);
+    });
+
+    test("inserts and queries linked edges with confidence filtering", () => {
+      const db = createTestDB();
+      const sourceId = "evt-error-101";
+      const targetId = "evt-fix-202";
+
+      db.insertEdge(sourceId, targetId, "RESOLVED_BY", 1.0);
+      db.insertEdge("evt-error-101", "evt-unrelated-303", "FOLLOWED_BY", 0.3);
+
+      const linked = db.getLinkedEdges(sourceId, 0.5);
+      expect(linked).toHaveLength(1);
+      expect(linked[0].target_id).toBe(targetId);
+      expect(linked[0].relationship).toBe("RESOLVED_BY");
+      expect(linked[0].confidence).toBe(1.0);
+    });
+
+    test("queries latest session decision and inserts LED_TO edge", () => {
+      const db = createTestDB();
+      const sid = `dec-test-${Date.now()}`;
+      db.ensureSession(sid, "/test/project");
+
+      db.insertEvent(sid, {
+        type: "architecture_choice",
+        category: "decision",
+        data: "Selected SQLite property graph schema",
+        priority: 2,
+        data_hash: "",
+      });
+
+      const latestDec = db.getLatestSessionDecision(sid);
+      expect(latestDec).not.toBeNull();
+      expect(latestDec?.category).toBe("decision");
+      expect(latestDec?.data).toContain("SQLite property graph");
+
+      db.insertEdge(`evt-dec-${latestDec!.id}`, "evt-edit-99", "LED_TO", 0.8);
+      const linked = db.getLinkedEdges(`evt-dec-${latestDec!.id}`, 0.5);
+      expect(linked).toHaveLength(1);
+      expect(linked[0].relationship).toBe("LED_TO");
+      expect(linked[0].target_id).toBe("evt-edit-99");
+    });
+
+    test("queries latest session constraint and inserts CONSTRAINS edge", () => {
+      const db = createTestDB();
+      const sid = `constr-test-${Date.now()}`;
+      db.ensureSession(sid, "/test/project");
+
+      db.insertEvent(sid, {
+        type: "constraint_discovered",
+        category: "constraint",
+        data: "permission denied for cd command in pwsh",
+        priority: 2,
+        data_hash: "",
+      });
+
+      const latestConstr = db.getLatestSessionConstraint(sid);
+      expect(latestConstr).not.toBeNull();
+      expect(latestConstr?.data).toContain("permission denied");
+
+      db.insertEdge(`evt-constraint-${latestConstr!.id}`, "tool-pwsh", "CONSTRAINS", 0.85);
+      const linked = db.getLinkedEdges(`evt-constraint-${latestConstr!.id}`, 0.5);
+      expect(linked).toHaveLength(1);
+      expect(linked[0].relationship).toBe("CONSTRAINS");
+      expect(linked[0].target_id).toBe("tool-pwsh");
+      expect(linked[0].confidence).toBe(0.85);
+    });
+
+    test("queries latest subagent task and inserts PRODUCED edge", () => {
+      const db = createTestDB();
+      const sid = `sub-test-${Date.now()}`;
+      db.ensureSession(sid, "/test/project");
+
+      db.insertEvent(sid, {
+        type: "subagent_launched",
+        category: "subagent",
+        data: "[launched] Research SQLite FTS5 performance",
+        priority: 3,
+        data_hash: "",
+      });
+
+      const latestSub = db.getLatestSubagentTask(sid);
+      expect(latestSub).not.toBeNull();
+      expect(latestSub?.type).toBe("subagent_launched");
+
+      db.insertEdge(`evt-subagent-${latestSub!.id}`, "evt-finding-55", "PRODUCED", 0.9);
+      const linked = db.getLinkedEdges(`evt-subagent-${latestSub!.id}`, 0.5);
+      expect(linked).toHaveLength(1);
+      expect(linked[0].relationship).toBe("PRODUCED");
+      expect(linked[0].target_id).toBe("evt-finding-55");
+      expect(linked[0].confidence).toBe(0.9);
+    });
+
+    test("queries latest implement intent and inserts MOTIVATED edge ignoring investigate mode", () => {
+      const db = createTestDB();
+      const sid = `intent-test-${Date.now()}`;
+      db.ensureSession(sid, "/test/project");
+
+      // Insert investigate intent (should be ignored)
+      db.insertEvent(sid, {
+        type: "intent",
+        category: "intent",
+        data: "investigate",
+        priority: 4,
+        data_hash: "",
+      });
+      expect(db.getLatestImplementIntent(sid)).toBeNull();
+
+      // Insert implement intent (should be matched)
+      db.insertEvent(sid, {
+        type: "intent",
+        category: "intent",
+        data: "implement",
+        priority: 4,
+        data_hash: "",
+      });
+
+      const latestIntent = db.getLatestImplementIntent(sid);
+      expect(latestIntent).not.toBeNull();
+      expect(latestIntent?.data).toBe("implement");
+
+      db.insertEdge(`evt-intent-${latestIntent!.id}`, "evt-root-101", "MOTIVATED", 0.8);
+      const linked = db.getLinkedEdges(`evt-intent-${latestIntent!.id}`, 0.5);
+      expect(linked).toHaveLength(1);
+      expect(linked[0].relationship).toBe("MOTIVATED");
+      expect(linked[0].target_id).toBe("evt-root-101");
+      expect(linked[0].confidence).toBe(0.8);
+    });
+
+    test("queries latest iteration loop and inserts LOOPED_ON edge", () => {
+      const db = createTestDB();
+      const sid = `loop-test-${Date.now()}`;
+      db.ensureSession(sid, "/test/project");
+
+      db.insertEvent(sid, {
+        type: "retry_detected",
+        category: "iteration-loop",
+        data: "Edit called 3 times with similar input",
+        priority: 2,
+        data_hash: "",
+      });
+
+      const latestLoop = db.getLatestIterationLoop(sid);
+      expect(latestLoop).not.toBeNull();
+      expect(latestLoop?.data).toContain("called 3 times");
+
+      db.insertEdge(`evt-loop-${latestLoop!.id}`, "tool-Edit", "LOOPED_ON", 0.9);
+      const linked = db.getLinkedEdges(`evt-loop-${latestLoop!.id}`, 0.5);
+      expect(linked).toHaveLength(1);
+      expect(linked[0].relationship).toBe("LOOPED_ON");
+      expect(linked[0].target_id).toBe("tool-Edit");
+      expect(linked[0].confidence).toBe(0.9);
+    });
+  });
 });
+

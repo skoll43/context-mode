@@ -1723,4 +1723,112 @@ export class SessionDB extends SQLiteBase {
       .run();
     return Number(result.changes ?? 0);
   }
+
+  /**
+   * Insert or update a causal relationship edge between two session items.
+   */
+  insertEdge(sourceId: string, targetId: string, relationship: string, confidence: number = 1.0): void {
+    this.db.prepare(`
+      INSERT OR REPLACE INTO session_edges (source_id, target_id, relationship, confidence, created_at)
+      VALUES (?, ?, ?, ?, datetime('now'))
+    `).run(sourceId, targetId, relationship, confidence);
+  }
+
+  /**
+   * Retrieve linked edges for a given source_id meeting minimum confidence threshold.
+   */
+  getLinkedEdges(sourceId: string, minConfidence: number = 0.5): Array<{ source_id: string; target_id: string; relationship: string; confidence: number }> {
+    return (this.db.prepare(`
+      SELECT source_id, target_id, relationship, confidence
+      FROM session_edges
+      WHERE source_id = ? AND confidence >= ?
+      ORDER BY confidence DESC
+    `).all(sourceId, minConfidence) as Array<{ source_id: string; target_id: string; relationship: string; confidence: number }>) || [];
+  }
+
+  /**
+   * Look up the ID / data signature of the most recent UNRESOLVED error event for a given session.
+   * Uses a NOT EXISTS subquery so errors 10+ steps later remain linkable until resolved.
+   */
+  getLatestSessionError(sessionId: string): { id: number; data: string } | null {
+    const row = this.db.prepare(`
+      SELECT e.id, e.data FROM session_events e
+      WHERE e.session_id = ? 
+        AND e.category = 'error'
+        AND NOT EXISTS (
+          SELECT 1 FROM session_edges edge 
+          WHERE edge.source_id = ('evt-err-' || e.id) 
+            AND edge.relationship = 'RESOLVED_BY'
+        )
+      ORDER BY e.id DESC LIMIT 1
+    `).get(sessionId) as { id: number; data: string } | undefined;
+    return row ?? null;
+  }
+
+  /**
+   * Look up the ID / data signature of the most recent decision, plan, or goal event for a given session.
+   */
+  getLatestSessionDecision(sessionId: string): { id: number; data: string; category: string } | null {
+    const row = this.db.prepare(`
+      SELECT e.id, e.data, e.category FROM session_events e
+      WHERE e.session_id = ? 
+        AND e.category IN ('decision', 'plan', 'goal')
+      ORDER BY e.id DESC LIMIT 1
+    `).get(sessionId) as { id: number; data: string; category: string } | undefined;
+    return row ?? null;
+  }
+
+  /**
+   * Look up the ID / data signature of the most recent constraint event for a given session.
+   */
+  getLatestSessionConstraint(sessionId: string): { id: number; data: string } | null {
+    const row = this.db.prepare(`
+      SELECT e.id, e.data FROM session_events e
+      WHERE e.session_id = ? 
+        AND e.category = 'constraint'
+      ORDER BY e.id DESC LIMIT 1
+    `).get(sessionId) as { id: number; data: string } | undefined;
+    return row ?? null;
+  }
+
+  /**
+   * Look up the ID / data signature of the most recent subagent launch or task event for a given session.
+   */
+  getLatestSubagentTask(sessionId: string): { id: number; data: string; type: string } | null {
+    const row = this.db.prepare(`
+      SELECT e.id, e.data, e.type FROM session_events e
+      WHERE e.session_id = ? 
+        AND (e.category IN ('subagent', 'task') OR e.type IN ('subagent_launched', 'task'))
+      ORDER BY e.id DESC LIMIT 1
+    `).get(sessionId) as { id: number; data: string; type: string } | undefined;
+    return row ?? null;
+  }
+
+  /**
+   * Look up the ID / data signature of the most recent 'implement' intent event for a given session.
+   * Gated: strictly ignores 'investigate' mode prompts to prevent redundant edge creation.
+   */
+  getLatestImplementIntent(sessionId: string): { id: number; data: string } | null {
+    const row = this.db.prepare(`
+      SELECT e.id, e.data FROM session_events e
+      WHERE e.session_id = ? 
+        AND e.category = 'intent'
+        AND e.data = 'implement'
+      ORDER BY e.id DESC LIMIT 1
+    `).get(sessionId) as { id: number; data: string } | undefined;
+    return row ?? null;
+  }
+
+  /**
+   * Look up the ID / data signature of the most recent iteration loop (stuck retry) event for a given session.
+   */
+  getLatestIterationLoop(sessionId: string): { id: number; data: string } | null {
+    const row = this.db.prepare(`
+      SELECT e.id, e.data FROM session_events e
+      WHERE e.session_id = ? 
+        AND e.category = 'iteration-loop'
+      ORDER BY e.id DESC LIMIT 1
+    `).get(sessionId) as { id: number; data: string } | undefined;
+    return row ?? null;
+  }
 }
